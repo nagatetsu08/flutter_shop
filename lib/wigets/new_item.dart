@@ -1,7 +1,10 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_shop/data/categories.dart';
 import 'package:flutter_shop/models/category.dart';
-import 'package:flutter_shop/models/grocery_item.dart';
+
+import 'package:http/http.dart' as http; //別名をつけてimport
 
 // 状態管理の必要があるためStatefulWiget
 class NewItem extends StatefulWidget {
@@ -22,12 +25,16 @@ class _NewItemState extends State<NewItem> {
   var _enteredQuantity = 1;
   var _selectedCategory = categories[Categories.vegetables]!;
 
+  // ローディング判定
+  var _isSending = false;
+
 
   /// 下記functionが動くと、新しいItemを作成しつつ、前の画面に戻る。
   /// 前画面では値を受け取ってから動く必要があるので、前画面の呼び出し関数にasync awaitを使う必要がある。（この画面では必要ない）
   /// 
   
-  void _saveItem() {
+  // awaitはasyncの中でしか使えないので、使いたい場合はメソッド自体をasyncにする
+  void _saveItem() async {
     
     //formKeyと下のFormが結びついているので、currentStateでそのときのForm状態を取得できる。
     //ただし、最後に!をつけて、フォーム自体がnullでないことを明示する必要がある。（これはルールのようなもの）
@@ -35,18 +42,35 @@ class _NewItemState extends State<NewItem> {
     //全て通過したらtrue,ひっかかったらfalseが返ってくる
     if(_formKey.currentState!.validate()) {
       // これが実行されると、各フォームパラメータ内でonSaved関数が実行される
-      _formKey.currentState!.save();
+      _formKey.currentState!.save(); //onSavedイベントを発生させるため
 
-      Navigator.of(context).pop(
-        GroceryItem(
-          id: DateTime.now().toString(),
-          name: _enteredName, 
-          quantity: _enteredQuantity, 
-          category: _selectedCategory
-        )
-      ); //前の画面に戻る
+      setState(() {
+        _isSending = true;
+      });
+
+      final url = Uri.https('flutter-shop-858dd-default-rtdb.firebaseio.com', 'shoping-list.json');
+      final response =await http.post(
+        url,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        // idがいらないのはfirebaseがユニークIDを勝手に生成してくれるから
+        body: json.encode({
+          'name': _enteredName, 
+          'quantity': _enteredQuantity, 
+          'category': _selectedCategory.title //文字列にしとかないとエンコードに失敗する
+        })
+      );
+
+      // この画面がマウントできる状態になければ何もしない
+      // なぜこのちぇっくをするかというと、このアプリにはないが、ボタン押下後に別の画面にいってしまっていて、この画面を表示できる状態でない時
+      // クラッシュしてしまう可能性がある。
+      // なので、非同期処理が絡む上で何か処理の後に画面遷移が伴うような処理の時は、以下の構文でmountedされているかをチェックした方がいい（公式推奨）
+      if(!context.mounted) {
+        return;
+      }
+      Navigator.of(context).pop(); //前の画面に戻る
     }
-
   }
 
   @override
@@ -155,15 +179,27 @@ class _NewItemState extends State<NewItem> {
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   TextButton(
-                    onPressed: () {
+                    // 送信中であればnullを返す。そうすると、onPressを無効化できる
+                    // 送信中でなければ無名関数を返す。（一種のテクニック）
+                    onPressed: _isSending ? null :  () {
                       _formKey.currentState!.reset();
                     }, 
                     child: const Text('Rest')
                   ), // 画面の内容をリセットするボタン
                   const SizedBox(width: 12),
                   ElevatedButton(
-                    onPressed: _saveItem,
-                    child: const Text('Add')),  // フォームを送信するボタン
+
+                    // 送信中であればnullを返す。そうすると、onPressを無効化できる
+                    // 送信中でなければ_saveItem関数を返す。（一種のテクニック）
+                    onPressed: _isSending ? null : _saveItem,
+                    child: _isSending 
+                      ? 
+                      const SizedBox(
+                        height: 16, 
+                        width: 16,
+                        child: CircularProgressIndicator(),
+                      ) 
+                      : const Text('Add')),  // フォームを送信するボタン
                 ],
               )
             ],
